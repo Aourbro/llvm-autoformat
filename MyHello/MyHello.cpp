@@ -8,11 +8,28 @@
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 
 using namespace llvm;
+
+static cl::opt<int> BufferArg(
+        "af-buffer",
+        cl::desc("allows we set break point at some place"),
+        cl::init(-1));
+
+static cl::opt<int> LenArg(
+        "af-len",
+        cl::desc("allows we set break point at some place"),
+        cl::init(-1));
+
+static cl::opt<std::string> ParsingFunc(
+        "af-parser",
+        cl::desc("allows we set break point at some place"),
+        cl::init(""));
 
 namespace {
 struct MyHello : public ModulePass {
@@ -21,205 +38,146 @@ struct MyHello : public ModulePass {
 
   bool stop = false;
 
-  //TODO:
-  //  set these two var to args
-  std::string FUNCNAME = "prt";
-  std::string VARNAME = "buf.addr";
-
   bool runOnModule(Module &M) override {
 
-    // some types that we need
-    Type *intType = Type::getInt32Ty(M.getContext());
-    Type *ptr64Type = Type::getInt64PtrTy(M.getContext());
-    Type *arrType = ArrayType::get(ptr64Type, 1024);
-    std::vector<Type *> printfArgsType({Type::getInt8PtrTy(M.getContext())});
-    FunctionType *openType = FunctionType::get(ptr64Type, printfArgsType, true);
-    FunctionType *printfType = FunctionType::get(intType, printfArgsType, true);
-    FunctionCallee fopenFunc = M.getOrInsertFunction("fopen", openType);
-    FunctionCallee fprintfFunc = M.getOrInsertFunction("fprintf", printfType);
+    Type *int64Type = Type::getInt64Ty(M.getContext());
+    Type *voidType = Type::getVoidTy(M.getContext());
+    Type *ptr8Type = Type::getInt8PtrTy(M.getContext());
 
-    // file pointer of log.txt
-    Constant *fp = M.getOrInsertGlobal("__no_repeat_fp__", ptr64Type);
-    GlobalVariable *gv_fp = M.getNamedGlobal("__no_repeat_fp__");
-    gv_fp->setDSOLocal(true);
-    gv_fp->setInitializer(Constant::getNullValue(ptr64Type));
-    gv_fp->setAlignment(MaybeAlign(8));
+    const DataLayout *DL = &M.getDataLayout();
 
-    // offset in the message
-    Constant *offset = M.getOrInsertGlobal("__no_repeat_offset__", intType);
-    GlobalVariable *gv_of = M.getNamedGlobal("__no_repeat_offset__");
-    gv_of->setDSOLocal(true);
-    gv_of->setInitializer(ConstantInt::get(intType, 0));
-    gv_of->setAlignment(MaybeAlign(4));
+    FunctionType *BeginningFuncTy = FunctionType::get(voidType, {ptr8Type, int64Type}, false);
+    FunctionType *EndFuncTy = FunctionType::get(voidType, {}, false);
+    FunctionType *LoggingFuncTy = FunctionType::get(voidType, {ptr8Type, int64Type}, false);
+    FunctionType *PushingFuncTy = FunctionType::get(voidType, {int64Type}, false);
+    FunctionType *PoppingFuncTy = FunctionType::get(voidType, {}, false);
 
-    // shadow call stack
-    Constant *call_stack = M.getOrInsertGlobal("__no_repeat_stack__", arrType);
-    GlobalVariable *gv_cs = M.getNamedGlobal("__no_repeat_stack__");
-    gv_cs->setDSOLocal(true);
-    gv_cs->setInitializer(ConstantAggregateZero::get(arrType));
-    gv_cs->setAlignment(MaybeAlign(16));
+    /// these functions should be implemented as a third-party lib and linked to the instrumented code
+    /// @{
+    /// static void *buf_base = 0;
+    /// static unsigned buf_len = 0;
+    /// static bool start_logging = 0;
+    /// void autoformat_beginning(void* base, uint64_t buf_len) {
+    ///     buf_base = base; buf_len = len;
+    ///     start_logging = 1;
+    /// }
+    static const char *BeginningFunction = "autoformat_beginning";
+    static Function *BeginningFunc = (Function*)M.getOrInsertFunction(BeginningFunction, BeginningFuncTy).getCallee();
 
-    // stack pointer of the call stack
-    Constant *stack_pointer = M.getOrInsertGlobal("__no_repeat_pointer__", intType);
-    GlobalVariable *gv_sp = M.getNamedGlobal("__no_repeat_pointer__");
-    gv_sp->setDSOLocal(true);
-    gv_sp->setInitializer(ConstantInt::get(intType, 0));
-    gv_sp->setAlignment(MaybeAlign(4));
+    /// void autoformat_end() {
+    ///     buf_base = 0; buf_len = 0;
+    ///     start_logging = 0;
+    /// }
+    static const char *EndFunction = "autoformat_end";
+    static Function *EndFunc = (Function*)M.getOrInsertFunction(EndFunction, EndFuncTy).getCallee();
+
+    /// void autoformat_logging(void* ptr, uint64_t nbytes) {
+    ///    for (unsigned x = 0; x < nbytes; ++x)
+    ///     if (start_logging && ptr + x - buf_base >= 0 && ptr + x - buf_base < buf_len) {
+    ///          // logging the offset and the global call stack
+    ///      }
+    /// }
+    static const char *LoggingFunction = "autoformat_logging";
+    static Function *LoggingFunc = (Function*)M.getOrInsertFunction(LoggingFunction, LoggingFuncTy).getCallee();
+
+    /// uint64_t *call_stack = 0;
+    /// uint64_t call_stack_len = 0;
+    /// uint64_t call_stack_ptr = 0;
+    /// void autoformat_pushing(uint64_t func_id) {
+    ///    if (!start_logging) return;
+    ///    if (call_stack == 0) {
+    ///         call_stack = malloc(1000); call_stack_len = 1000;
+    ///     } else if (call_stack_ptr >= call_stack_len) {
+    ///         call_stack = realloc(call_stack_len + 500); call_stack_len += 500;
+    ///     }
+    ///     call_stack[call_stack_ptr++] = func_id;
+    /// }
+    static const char *PushingFunction = "autoformat_pushing";
+    static Function *PushingFunc = (Function*)M.getOrInsertFunction(PushingFunction, PushingFuncTy).getCallee();
+
+    /// void autoformat_popping() {
+    ///      if (!start_logging) return;
+    ///      assert(call_stack_ptr > 0);
+    ///      call_stack_ptr--;
+    ///      if (call_stack_ptr == 0) start_logging = 0; // this means we exit the entry func
+    /// }
+    static const char *PoppingFunction = "autoformat_popping";
+    static Function *PoppingFunc = (Function*)M.getOrInsertFunction(PoppingFunction, PoppingFuncTy).getCallee();
+    /// @}
 
     for(Module::iterator I = M.begin(); I != M.end(); I++){
       Function &F = *I;
 
-      // create and open log.txt
-      if(F.getName().equals("main")){
-        BasicBlock &main_begin_bb = *F.begin();
-        Instruction &main_begin_inst = *main_begin_bb.begin();
-        IRBuilder<> builder(&main_begin_inst);
-        builder.SetInsertPoint(&main_begin_inst);
-        Value *fopen_params[] = {
-          builder.CreateGlobalStringPtr("log.txt", "fopenfile"),
-          builder.CreateGlobalStringPtr("w+", "fopenmode")
-        };
-        CallInst *fopenfd = builder.CreateCall(fopenFunc, fopen_params, "fopenlog");
-        builder.CreateStore(fopenfd, fp);
-      }
+      if(F.isDeclaration()) continue;
 
-      // push current function in stack
-      if(!F.getBasicBlockList().empty()){
-        BasicBlock &main_begin_bb = *F.begin();
-        Instruction &main_begin_inst = *main_begin_bb.begin();
-        IRBuilder<> builder(&main_begin_inst);
-        builder.SetInsertPoint(&main_begin_inst);
-        Value *load = builder.CreateLoad(intType, stack_pointer, "load");
-        Value *add = builder.CreateAdd(load, ConstantInt::get(intType, 1));
-        Constant *funcname = builder.CreateGlobalStringPtr(F.getName(), "funcname");
-        builder.CreateStore(funcname, builder.CreateGEP(arrType, call_stack, {ConstantInt::get(intType, 0), add}, "gep", true));
-        builder.CreateStore(add, stack_pointer);
-      }
+      errs() << "MyHello: instrumenting " << F.getName() << "\n";
 
       for(Function::iterator I = F.begin(); I != F.end(); I++){
         BasicBlock &BB = *I;
         for(BasicBlock::iterator I = BB.begin(); I != BB.end(); I++){
           Instruction &Inst = *I;
           IRBuilder<> builder(&Inst);
-          builder.SetInsertPoint(&Inst);
 
           Inst.dump();
 
-          // concat function name and var name as the mark's name, var name is also the inst name if this inst creates a new var
-          std::string new_var = F.getName().str() + Inst.getNameOrAsOperand();
-
-          // alloca inst, if target var alloced here, mark it (1 means marked, 0 unmarked)
-          AllocaInst *allocaInst = dyn_cast<AllocaInst>(&Inst);
-          if(allocaInst){
-            M.getOrInsertGlobal(new_var, intType);
-            GlobalVariable *gv = M.getNamedGlobal(new_var);
-            gv->setDSOLocal(true);
-            gv->setInitializer(ConstantInt::get(intType, 0));
-            gv->setAlignment(MaybeAlign(4));
-            if(F.getName().equals(FUNCNAME) && !allocaInst->getNameOrAsOperand().compare(VARNAME)){
-              builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), 1), M.getNamedGlobal(new_var));
-            }
-            else{
-              builder.CreateStore(ConstantInt::get(builder.getInt32Ty(), 0), M.getNamedGlobal(new_var));
-            }
-          }
-
-          // call inst, incomplete
+          // call inst, push & pop & log
           CallInst *callInst = dyn_cast<CallInst>(&Inst);
           if(callInst){
-            M.getOrInsertGlobal(new_var, intType);
-            GlobalVariable *gv = M.getNamedGlobal(new_var);
-            gv->setDSOLocal(true);
-            gv->setInitializer(ConstantInt::get(intType, 0));
-            gv->setAlignment(MaybeAlign(4));
-            //TODO:
-            //  propagate the annotation when it returns
+            builder.SetInsertPoint(callInst);
+            builder.CreateCall(PushingFuncTy, PushingFunc, {ConstantInt::getSigned(int64Type, (int64_t) callInst)});
+            if(callInst->getCalledFunction() && (
+               callInst->getCalledFunction()->getIntrinsicID() == Intrinsic::memcpy_element_unordered_atomic
+            || callInst->getCalledFunction()->getIntrinsicID() == Intrinsic::memcpy
+            )){
+              Value *ptr = callInst->getArgOperand(1);
+              assert(ptr->getType()->isPointerTy());
+              assert(ptr->getType()->getPointerElementType()->isIntegerTy());
+              if(!ptr->getType()->getPointerElementType()->isIntegerTy(8)) ptr = builder.CreateBitOrPointerCast(ptr, ptr8Type, "castto8");
+              Value *size = callInst->getArgOperand(2);
+              assert(size->getType()->isIntegerTy());
+              if(!size->getType()->isIntegerTy(64)) size = builder.CreateZExtOrBitCast(size, int64Type, "castto64");
+              builder.CreateCall(LoggingFuncTy, LoggingFunc, {ptr, size});
+            }
+            builder.SetInsertPoint(callInst->getNextNode());
+            builder.CreateCall(PoppingFuncTy, PoppingFunc, {});
+            I++;
           }
 
-          // load inst, set new var marked as the pointer operand
+          // load inst, log
           LoadInst *loadInst = dyn_cast<LoadInst>(&Inst);
-          if(loadInst
-             && M.getNamedGlobal(F.getName().str() + loadInst->getPointerOperand()->getName().str())){
-            M.getOrInsertGlobal(new_var, intType);
-            GlobalVariable *gv = M.getNamedGlobal(new_var);
-            gv->setDSOLocal(true);
-            gv->setInitializer(ConstantInt::get(intType, 0));
-            gv->setAlignment(MaybeAlign(4));
-            LoadInst *load = builder.CreateLoad(intType, M.getNamedGlobal(F.getName().str() + loadInst->getPointerOperand()->getName().str()), "load");
-            builder.CreateStore(load, M.getNamedGlobal(new_var));
+          if(loadInst && loadInst->getType()->isIntegerTy()){
+            builder.SetInsertPoint(loadInst);
+            Value *ptr = builder.CreateBitOrPointerCast(loadInst->getPointerOperand(), ptr8Type, "castto8");
+            builder.CreateCall(LoggingFuncTy, LoggingFunc, {ptr, ConstantInt::getSigned(int64Type, DL->getTypeStoreSize(loadInst->getType()))});
           }
+        }
+      }
 
-          //store inst, set pointer operand marked as value operand
-          StoreInst *storeInst = dyn_cast<StoreInst>(&Inst);
-          if(storeInst
-             && M.getNamedGlobal(F.getName().str() + storeInst->getValueOperand()->getName().str())
-             &&M.getNamedGlobal(F.getName().str() + storeInst->getPointerOperand()->getName().str())){
-            LoadInst *load;
-            load = builder.CreateLoad(intType, M.getNamedGlobal(F.getName().str() + storeInst->getValueOperand()->getName().str()), "load");
-            builder.CreateStore(load, M.getNamedGlobal(F.getName().str() + storeInst->getPointerOperand()->getName().str()));
-          }
+      if(F.getName().equals(ParsingFunc.getValue())){
+        // insert start function
+        int BufArgId = BufferArg.getValue();
+        int LenArgId = LenArg.getValue();
+        assert(BufArgId >= 0 && LenArgId >= 0);
+        BasicBlock &main_begin_bb = *F.begin();
+        Instruction &main_begin_inst = *main_begin_bb.begin();
+        IRBuilder<> builder(&main_begin_inst);
+        builder.SetInsertPoint(&main_begin_inst);
+        Value *BufferPtr = builder.CreateBitOrPointerCast(F.getArg(BufArgId), ptr8Type, "castto8");
+        Value *BufferLen = builder.CreateZExtOrBitCast(F.getArg(LenArgId), int64Type, "castto64");
+        builder.CreateCall(BeginningFuncTy, BeginningFunc, {BufferPtr, BufferLen});
 
-          // binary inst, incomplete
-          BinaryOperator *binInst = dyn_cast<BinaryOperator>(&Inst);
-          if(binInst){
-            //TODO:
-            //  union the annotation
-          }
+        for(Function::iterator I = F.begin(); I != F.end(); I++){
+          BasicBlock &BB = *I;
+          for(BasicBlock::iterator I = BB.begin(); I != BB.end(); I++){
+            Instruction &Inst = *I;
 
-          // unary inst, set new var marked as the operand 
-          UnaryOperator *unaInst = dyn_cast<UnaryOperator>(&Inst);
-          if(unaInst
-             && M.getNamedGlobal(F.getName().str() + unaInst->getOperand(0)->getNameOrAsOperand())){
-            M.getOrInsertGlobal(new_var, intType);
-            GlobalVariable *gv = M.getNamedGlobal(new_var);
-            gv->setDSOLocal(true);
-            gv->setInitializer(ConstantInt::get(intType, 0));
-            gv->setAlignment(MaybeAlign(4));
-            LoadInst *load = builder.CreateLoad(intType, M.getNamedGlobal(F.getName().str() + unaInst->getOperand(0)->getNameOrAsOperand()), "load");
-            builder.CreateStore(load, M.getNamedGlobal(new_var));
-          }
+            Inst.dump();
 
-          // gep inst
-          // when the program is getting element ptr from the target var(buf), the second operand(index) of gep inst should be the offset in the message
-          // besides, the index should always be non-negative, so:
-          // multiply this index plus 1 and the mark of the first operand(array), then:
-          // if the first operand is marked, the result will be a positive number, else it will be 0, then:
-          // store the result sub 1 to the offset and print the log, finally:
-          // there might be some logs in the file whose offset are -1, and we could simply remove them
-          GetElementPtrInst *getInst = dyn_cast<GetElementPtrInst>(&Inst);
-          if(getInst
-             && M.getNamedGlobal(F.getName().str() + getInst->getOperand(0)->getNameOrAsOperand())){
-            M.getOrInsertGlobal(new_var, intType);
-            GlobalVariable *gv = M.getNamedGlobal(new_var);
-            gv->setDSOLocal(true);
-            gv->setInitializer(ConstantInt::get(intType, 0));
-            gv->setAlignment(MaybeAlign(4));
-            Value *load = builder.CreateLoad(intType, M.getNamedGlobal(F.getName().str() + getInst->getOperand(0)->getNameOrAsOperand()), "load");
-            Value *trunc = builder.CreateTrunc(getInst->getOperand(1), intType);
-            Value *add = builder.CreateAdd(trunc, ConstantInt::get(builder.getInt32Ty(), 1));
-            Value *mul = builder.CreateMul(add, load, "mul");
-            builder.CreateStore(mul, offset);
-            LoadInst *load_fp = builder.CreateLoad(Type::getInt64PtrTy(F.getContext()), fp, "load_fp");
-            Value *load_offset = builder.CreateLoad(Type::getInt32Ty(F.getContext()), offset, "load_offset");
-            Value *load_sp = builder.CreateLoad(intType, stack_pointer, "load_sp");
-            Value *sub = builder.CreateSub(load_offset, ConstantInt::get(builder.getInt32Ty(), 1));
-            Value *fputs_params[] = {
-              load_fp,
-              builder.CreateGlobalStringPtr("%d\t%d\t%s\t%x\n", "accept_insert"),
-              sub,
-              ConstantInt::get(builder.getInt32Ty(), 1),
-              builder.CreateLoad(ptr64Type, builder.CreateGEP(arrType, call_stack, {ConstantInt::get(intType, 0), load_sp}, "gep", true)),
-              ConstantInt::get(builder.getInt32Ty(), 3),
-            };
-            builder.CreateCall(fprintfFunc, fputs_params, "get_call");
-          }
-
-          // return inst, pop the stack
-          ReturnInst *returnInst = dyn_cast<ReturnInst>(&Inst);
-          if(returnInst){
-            Value *load = builder.CreateLoad(intType, stack_pointer, "load");
-            Value *sub = builder.CreateSub(load, ConstantInt::get(intType, 1));
-            builder.CreateStore(sub, stack_pointer);
+            ReturnInst *returnInst = dyn_cast<ReturnInst>(&Inst);
+            if(returnInst){
+              builder.SetInsertPoint(returnInst);
+              builder.CreateCall(EndFuncTy, EndFunc, {});
+            }
           }
         }
       }
