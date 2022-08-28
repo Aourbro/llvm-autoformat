@@ -64,8 +64,8 @@ void autoformat_logging(uint8_t *ptr, uint64_t nbytes) {
         if (delta < buf_len) {
             // logging the offset and the call stack
             fprintf(fp, "[autoformat] %llu, ", delta);
-	    char c = ptr[x];
-            fprintf(fp, "%c, ", c);
+	    //char c = ptr[x];
+            //fprintf(fp, "%c, ", c);
             for (unsigned y = 0; y < call_stack_ptr; ++y) {
                 fprintf(fp, "%llu, ", call_stack[y]);
             }
