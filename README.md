@@ -17,4 +17,4 @@ add 2 args when running pass, -af-struct & -af-struct-off
 -this is because some server may pack their buffer, take "tiny" as an example  
 add file tiny.c & autoformat.cpp  
 -tiny.c is the server, the pass run correctly on this tiny server  
--autoformat.cpp has been changed, after running the pass, when the server received a message, the server will open a file called "af_log.txt" and print the logs into it  
+-autoformat.cpp has been changed, after running the pass, when the server received a message, the server will open a file called "af_log.txt" and print the logs into it(this file should be removed before running the pass for the next turn)  
