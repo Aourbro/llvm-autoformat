@@ -26,6 +26,16 @@ static cl::opt<int> LenArg(
         cl::desc("allows we set break point at some place"),
         cl::init(-1));
 
+static cl::opt<int> StructOffset(
+        "af-struct-off",
+        cl::desc("allows we set break point at some place"),
+        cl::init(-1));
+
+static cl::opt<std::string> Struct(
+        "af-struct",
+        cl::desc("allows we set break point at some place"),
+        cl::init(""));
+
 static cl::opt<std::string> ParsingFunc(
         "af-parser",
         cl::desc("allows we set break point at some place"),
@@ -40,6 +50,7 @@ struct MyHello : public ModulePass {
 
   bool runOnModule(Module &M) override {
 
+    //Type *int32Type = Type::getInt32Ty(M.getContext());
     Type *int64Type = Type::getInt64Ty(M.getContext());
     Type *voidType = Type::getVoidTy(M.getContext());
     Type *ptr8Type = Type::getInt8PtrTy(M.getContext());
@@ -130,9 +141,7 @@ struct MyHello : public ModulePass {
             || callInst->getCalledFunction()->getIntrinsicID() == Intrinsic::memcpy
             )){
               Value *ptr = callInst->getArgOperand(1);
-              assert(ptr->getType()->isPointerTy());
-              assert(ptr->getType()->getPointerElementType()->isIntegerTy());
-              if(!ptr->getType()->getPointerElementType()->isIntegerTy(8)) ptr = builder.CreateBitOrPointerCast(ptr, ptr8Type, "castto8");
+              ptr = builder.CreateBitOrPointerCast(ptr, ptr8Type, "castto8");
               Value *size = callInst->getArgOperand(2);
               assert(size->getType()->isIntegerTy());
               if(!size->getType()->isIntegerTy(64)) size = builder.CreateZExtOrBitCast(size, int64Type, "castto64");
@@ -157,12 +166,23 @@ struct MyHello : public ModulePass {
         // insert start function
         int BufArgId = BufferArg.getValue();
         int LenArgId = LenArg.getValue();
+        int StructOff = StructOffset.getValue();
         assert(BufArgId >= 0 && LenArgId >= 0);
         BasicBlock &main_begin_bb = *F.begin();
         Instruction &main_begin_inst = *main_begin_bb.begin();
         IRBuilder<> builder(&main_begin_inst);
         builder.SetInsertPoint(&main_begin_inst);
-        Value *BufferPtr = builder.CreateBitOrPointerCast(F.getArg(BufArgId), ptr8Type, "castto8");
+        Value *BufferPtr;
+        if(StructOff == -1)
+          BufferPtr = builder.CreateBitOrPointerCast(F.getArg(BufArgId), ptr8Type, "castto8");
+        else{
+          assert(!Struct.getValue().empty());
+          errs() << "1\n";
+          M.getNamedGlobal("struct." + Struct.getValue());
+          errs() << "2\n";
+          BufferPtr = builder.CreateStructGEP(StructType::getTypeByName(M.getContext(), "struct." + Struct.getValue()), F.getArg(BufArgId), StructOff, "gep");
+          errs() << "4\n";
+        }
         Value *BufferLen = builder.CreateZExtOrBitCast(F.getArg(LenArgId), int64Type, "castto64");
         builder.CreateCall(BeginningFuncTy, BeginningFunc, {BufferPtr, BufferLen});
 
