@@ -169,7 +169,7 @@ struct MyHello : public ModulePass {
               Value *size = callInst->getArgOperand(2);
               assert(size->getType()->isIntegerTy());
               if(!size->getType()->isIntegerTy(64)) size = builder.CreateZExtOrBitCast(size, int64Type, "castto64");
-              //builder.CreateCall(LoggingFuncTy, LoggingFunc, {src, size});
+              builder.CreateCall(LoggingFuncTy, LoggingFunc, {src, size});
               builder.CreateCall(AddBaseFuncTy, AddBaseFunc, {dest, src, size});
               MCpydests.push_back(dest);
             }
