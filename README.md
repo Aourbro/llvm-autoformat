@@ -11,7 +11,10 @@ llvm version: 15.0.0
 3. open a terminal at "/llvm-project/build/" and make, there should be a new file "LLVMMyHello.so" at "/llvm-project/build/lib/"  
 4. use "opt -load \<somewhere\>/llvm-project/build/lib/LLVMMyHello.so -myhello \<original llvm bitcode\> \> \<output bitcode\> -enable-new-pm=0 \[-af-buffer=\<buf arg id\> -af-len=\<buf len arg id\>\] -af-parser=\<func name\> \[-af-struct=\<struct name\>\ -af-struct-off=\<offset in struct\>]" to run the pass  
 5. use "clang \<output bitcode\> -o \<output exe file\>" to finish the compilation  
-   
+  
+# update logs, 20220901  
+fixed the bug mentioned before, now it could handle "memcpy" properly  
+  
 # update logs, 20220831
 NOTICE: it's still buggy, there are much more redundant lines in the log file  
 -this is because some parser function does not have a buffer as an argument, e.g. in "tiny" server, "doit" is the main parser function, it only has one single argument which is indeed a file pointer, and inside this function, there is a struct used to store the message called rio  
