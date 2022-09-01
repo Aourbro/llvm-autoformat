@@ -76,8 +76,13 @@ void autoformat_add_base(uint8_t *base, uint8_t *src, uint64_t len){
         return;
     }
     while(crt){
+        if(crt->buf_base == base) return;
+        crt = crt->next;
+    }
+    crt = buf_bases_head->next;
+    while(crt){
         uint64_t delta = ((uint64_t) src) - (uint64_t) crt->buf_base;
-        if (delta < crt->buf_len) {
+        if (delta < crt->buf_len && crt->buf_base != base) {
             buf_struct *buf = (buf_struct *) malloc(sizeof(buf_struct));
             buf->buf_base = base;
             buf->buf_len = len;
@@ -118,7 +123,7 @@ void autoformat_logging(uint8_t *ptr, uint64_t nbytes) {
                 fprintf(fp, "[autoformat] %llu, ", delta);
                 char c = ptr[x];
                 fprintf(fp, "%c, ", c);
-                for (unsigned y = 0; y <= call_stack_ptr; ++y) {
+                for (unsigned y = 0; y < call_stack_ptr; ++y) {
                     fprintf(fp, "%llu, ", call_stack[y]);
                 }
                 fprintf(fp, "\n");
