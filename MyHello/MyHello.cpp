@@ -63,79 +63,41 @@ struct MyHello : public ModulePass {
     const DataLayout *DL = &M.getDataLayout();
 
     FunctionType *BeginningFuncTy = FunctionType::get(voidType, {}, false);
-    FunctionType *AddBaseFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type, int64Type}, false);
+    FunctionType *AddBaseFuncTy = FunctionType::get(voidType, {ptr8Type, int64Type, int64Type}, false);
     FunctionType *RemoveBaseFuncTy = FunctionType::get(voidType, {ptr8Type}, false);
     FunctionType *EndFuncTy = FunctionType::get(voidType, {}, false);
     FunctionType *LoggingFuncTy = FunctionType::get(voidType, {ptr8Type, int64Type}, false);
     FunctionType *PushingFuncTy = FunctionType::get(voidType, {int64Type}, false);
     FunctionType *PoppingFuncTy = FunctionType::get(voidType, {}, false);
+    FunctionType *MemcpyFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type, int64Type}, false);
+    FunctionType *SscanfFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type, }, true);
 
-    /// these functions should be implemented as a third-party lib and linked to the instrumented code
-    /// @{
-    /// static void *buf_base = 0;
-    /// static unsigned buf_len = 0;
-    /// static bool start_logging = 0;
-    /// void autoformat_beginning(void* base, uint64_t buf_len) {
-    ///     buf_base = base; buf_len = len;
-    ///     start_logging = 1;
-    /// }
     static const char *BeginningFunction = "autoformat_beginning";
     static Function *BeginningFunc = (Function*)M.getOrInsertFunction(BeginningFunction, BeginningFuncTy).getCallee();
 
-    /// void autoformat_add_base() {
-    ///     buf_base = 0; buf_len = 0;
-    ///     start_logging = 0;
-    /// }
     static const char *AddBaseFunction = "autoformat_add_base";
     static Function *AddBaseFunc = (Function*)M.getOrInsertFunction(AddBaseFunction, AddBaseFuncTy).getCallee();
 
-    /// void autoformat_end() {
-    ///     buf_base = 0; buf_len = 0;
-    ///     start_logging = 0;
-    /// }
     static const char *RemoveBaseFunction = "autoformat_remove_base";
     static Function *RemoveBaseFunc = (Function*)M.getOrInsertFunction(RemoveBaseFunction, RemoveBaseFuncTy).getCallee();
 
-    /// void autoformat_end() {
-    ///     buf_base = 0; buf_len = 0;
-    ///     start_logging = 0;
-    /// }
     static const char *EndFunction = "autoformat_end";
     static Function *EndFunc = (Function*)M.getOrInsertFunction(EndFunction, EndFuncTy).getCallee();
 
-    /// void autoformat_logging(void* ptr, uint64_t nbytes) {
-    ///    for (unsigned x = 0; x < nbytes; ++x)
-    ///     if (start_logging && ptr + x - buf_base >= 0 && ptr + x - buf_base < buf_len) {
-    ///          // logging the offset and the global call stack
-    ///      }
-    /// }
     static const char *LoggingFunction = "autoformat_logging";
     static Function *LoggingFunc = (Function*)M.getOrInsertFunction(LoggingFunction, LoggingFuncTy).getCallee();
 
-    /// uint64_t *call_stack = 0;
-    /// uint64_t call_stack_len = 0;
-    /// uint64_t call_stack_ptr = 0;
-    /// void autoformat_pushing(uint64_t func_id) {
-    ///    if (!start_logging) return;
-    ///    if (call_stack == 0) {
-    ///         call_stack = malloc(1000); call_stack_len = 1000;
-    ///     } else if (call_stack_ptr >= call_stack_len) {
-    ///         call_stack = realloc(call_stack_len + 500); call_stack_len += 500;
-    ///     }
-    ///     call_stack[call_stack_ptr++] = func_id;
-    /// }
     static const char *PushingFunction = "autoformat_pushing";
     static Function *PushingFunc = (Function*)M.getOrInsertFunction(PushingFunction, PushingFuncTy).getCallee();
 
-    /// void autoformat_popping() {
-    ///      if (!start_logging) return;
-    ///      assert(call_stack_ptr > 0);
-    ///      call_stack_ptr--;
-    ///      if (call_stack_ptr == 0) start_logging = 0; // this means we exit the entry func
-    /// }
     static const char *PoppingFunction = "autoformat_popping";
     static Function *PoppingFunc = (Function*)M.getOrInsertFunction(PoppingFunction, PoppingFuncTy).getCallee();
-    /// @}
+
+    static const char *MemcpyFunction = "autoformat_memcpy";
+    static Function *MemcpyFunc = (Function*)M.getOrInsertFunction(MemcpyFunction, MemcpyFuncTy).getCallee();
+
+    static const char *SscanfFunction = "autoformat_sscanf";
+    static Function *SscanfFunc = (Function*)M.getOrInsertFunction(SscanfFunction, SscanfFuncTy).getCallee();
 
     for(Module::iterator I = M.begin(); I != M.end(); I++){
       Function &F = *I;
@@ -144,12 +106,14 @@ struct MyHello : public ModulePass {
 
       errs() << "MyHello: instrumenting " << F.getName() << "\n";
 
+      std::vector<Value*> MCpydests;
+      std::vector<LoadInst*> loadInsts;
+
       for(Function::iterator I = F.begin(); I != F.end(); I++){
         BasicBlock &BB = *I;
         for(BasicBlock::iterator I = BB.begin(); I != BB.end(); I++){
           Instruction &Inst = *I;
           IRBuilder<> builder(&Inst);
-          std::vector<Value*> MCpydests;
 
           Inst.dump();
 
@@ -170,8 +134,17 @@ struct MyHello : public ModulePass {
               assert(size->getType()->isIntegerTy());
               if(!size->getType()->isIntegerTy(64)) size = builder.CreateZExtOrBitCast(size, int64Type, "castto64");
               builder.CreateCall(LoggingFuncTy, LoggingFunc, {src, size});
-              builder.CreateCall(AddBaseFuncTy, AddBaseFunc, {dest, src, size});
+              builder.CreateCall(MemcpyFuncTy, MemcpyFunc, {dest, src, size});
               MCpydests.push_back(dest);
+            }
+            if(callInst->getCalledFunction() && callInst->getCalledFunction()->getName().equals("__isoc99_sscanf")){
+              builder.SetInsertPoint(callInst->getNextNode());
+              int arg_num = callInst->arg_size();
+              std::vector<Value *> args;
+              for(int i = 0; i < arg_num; ++i) args.push_back(callInst->getArgOperand(i));
+              for(int i = 2; i < arg_num; ++i) MCpydests.push_back(callInst->getArgOperand(i));
+              builder.CreateCall(SscanfFuncTy, SscanfFunc, args);
+              I++;
             }
             builder.SetInsertPoint(callInst->getNextNode());
             builder.CreateCall(PoppingFuncTy, PoppingFunc, {});
@@ -184,6 +157,22 @@ struct MyHello : public ModulePass {
             builder.SetInsertPoint(loadInst);
             Value *ptr = builder.CreateBitOrPointerCast(loadInst->getPointerOperand(), ptr8Type, "castto8");
             builder.CreateCall(LoggingFuncTy, LoggingFunc, {ptr, ConstantInt::getSigned(int64Type, DL->getTypeStoreSize(loadInst->getType()))});
+            loadInsts.push_back(loadInst);
+          }
+
+          // store inst, similar to memcpy
+          StoreInst *storeInst = dyn_cast<StoreInst>(&Inst);
+          if(storeInst){
+            for(uint i = 0; i < loadInsts.size(); ++i){
+              if(storeInst->getValueOperand()->getType()->isIntegerTy() && !storeInst->getValueOperand()->getNameOrAsOperand().compare(loadInsts[i]->getNameOrAsOperand())){
+                builder.SetInsertPoint(storeInst);
+                Value *dest = storeInst->getPointerOperand();
+                dest = builder.CreateBitOrPointerCast(dest, ptr8Type, "castto8");
+                Value *src = builder.CreateBitOrPointerCast(loadInsts[i]->getPointerOperand(), ptr8Type, "castto8");
+                builder.CreateCall(MemcpyFuncTy, MemcpyFunc, {dest, src, ConstantInt::get(int64Type, 1)});
+                MCpydests.push_back(dest);
+              }
+            }
           }
 
           // return isnt, free some space
@@ -191,8 +180,9 @@ struct MyHello : public ModulePass {
           if(returnInst){
             while(!MCpydests.empty()){
               Value *dest = MCpydests.back();
+              dest = builder.CreateBitOrPointerCast(dest, ptr8Type, "castto8");
               MCpydests.pop_back();
-              builder.CreateCall(RemoveBaseFuncTy, RemoveBaseFunc, {dest});
+              //builder.CreateCall(RemoveBaseFuncTy, RemoveBaseFunc, {dest});
             }
           }
         }
@@ -219,7 +209,7 @@ struct MyHello : public ModulePass {
             BufferPtr = builder.CreateStructGEP(StructType::getTypeByName(M.getContext(), "struct." + Struct.getValue()), F.getArg(BufArgId), StructOff, "gep");
           }
           Value *BufferLen = builder.CreateZExtOrBitCast(F.getArg(LenArgId), int64Type, "castto64");
-          builder.CreateCall(AddBaseFuncTy, AddBaseFunc, {BufferPtr, BufferLen});
+          builder.CreateCall(AddBaseFuncTy, AddBaseFunc, {BufferPtr, ConstantInt::get(int64Type, 0), BufferLen});
         }
 
         for(Function::iterator I = F.begin(); I != F.end(); I++){
@@ -235,14 +225,14 @@ struct MyHello : public ModulePass {
               if(allocaInst->getName().equals(BufferName)){
                 Value *BufferLen = ConstantInt::get(int64Type, dyn_cast<ArrayType>(allocaInst->getAllocatedType())->getNumElements());
                 Value *BufferPtr = builder.CreateBitOrPointerCast(allocaInst, ptr8Type, "castto8");
-                builder.CreateCall(AddBaseFuncTy, AddBaseFunc, {BufferPtr, BufferPtr, BufferLen});
+                builder.CreateCall(AddBaseFuncTy, AddBaseFunc, {BufferPtr, ConstantInt::get(int64Type, 0), BufferLen});
               }
 
               if(allocaInst->getAllocatedType()->isStructTy() && allocaInst->getAllocatedType()->getStructName().equals("struct." + Struct.getValue())){
                 assert(LenArgId > 0);
                 Value *BufferLen = ConstantInt::get(int64Type, LenArgId);
                 Value *BufferPtr = builder.CreateStructGEP(StructType::getTypeByName(M.getContext(), "struct." + Struct.getValue()), allocaInst, StructOff, "gep");
-                builder.CreateCall(AddBaseFuncTy, AddBaseFunc, {BufferPtr, BufferPtr, BufferLen});
+                builder.CreateCall(AddBaseFuncTy, AddBaseFunc, {BufferPtr, ConstantInt::get(int64Type, 0), BufferLen});
               }
             }
 
@@ -254,6 +244,9 @@ struct MyHello : public ModulePass {
           }
         }
       }
+
+      MCpydests.clear();
+      loadInsts.clear();
     }
 
     return false;
