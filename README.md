@@ -12,7 +12,7 @@ llvm version: 15.0.0
 4. use "opt -load \<somewhere\>/llvm-project/build/lib/LLVMMyHello.so -myhello \<original llvm bitcode\> \> \<output bitcode\> -enable-new-pm=0 \[-af-buffer=\<buf arg id\> -af-len=\<buf len arg id\>\] -af-parser=\<func name\> \[-af-struct=\<struct name\>\ -af-struct-off=\<offset in struct\>]" to run the pass  
 5. use "clang \<output bitcode\> -o \<output exe file\>" to finish the compilation  
   
-# update logs, 20220903  
+# update logs, 20220904  
 update the method to deal with "memcpy"  
 -seperate "autoformat_add_base" function into two("autoformat_add_base" & "autoformat_memcpy"), making the logic of "autoformat.cpp" more clearly  
 add function "autoformat_sscanf"  
