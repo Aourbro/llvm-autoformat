@@ -17,7 +17,7 @@ update the method to deal with "memcpy"
 -seperate "autoformat_add_base" function into two("autoformat_add_base" & "autoformat_memcpy"), making the logic of "autoformat.cpp" more clearly  
 add function "autoformat_sscanf"  
 -now the pass will insert a function call before "sscanf" invocation since this function will also "copy" some chars to another location  
-logically, the algorithm mentioned in the paper(not implemented yet) could now recognize the request line of http protocol(generate this node on the feild tree) aiming at "tiny" server  
+logically, the algorithm mentioned in the paper(not implemented yet) could now recognize the request line of http protocol(generate this node on the field tree) aiming at "tiny" server  
   
 # update logs, 20220901  
 fixed the bug mentioned before, now it could handle "memcpy" properly  
