@@ -136,6 +136,7 @@ void autoformat_popping() {
 
 void autoformat_memcpy(uint8_t *dest, uint8_t *src, uint64_t size){
     if (!start_logging) return;
+    if(dest == src) return;
     buf_struct *crt = buf_bases_head->next;
 
     while(crt){
@@ -185,6 +186,18 @@ void autoformat_sscanf(char *str, char *format, ...){
             }
         }
     }
+}
+
+void autoformat_strcmp(char *str1, char *str2){
+    if(!start_logging) return;
+    autoformat_logging((uint8_t *) str1, strlen(str1));
+    autoformat_logging((uint8_t *) str2, strlen(str2));
+}
+
+void autoformat_strcpy(char *dest, char *src){
+    if(!start_logging) return;
+    autoformat_logging((uint8_t *) src, strlen(src));
+    autoformat_memcpy((uint8_t *) dest, (uint8_t *) src, strlen(src));
 }
 
 }
