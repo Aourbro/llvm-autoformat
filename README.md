@@ -11,6 +11,11 @@ llvm version: 15.0.0
 3. open a terminal at "/llvm-project/build/" and make, there should be a new file "LLVMMyHello.so" at "/llvm-project/build/lib/"  
 4. use "opt -load \<somewhere\>/llvm-project/build/lib/LLVMMyHello.so -myhello \<original llvm bitcode\> \> \<output bitcode\> -enable-new-pm=0 \[-af-buffer=\<buf arg id\> -af-len=\<buf len arg id\>\] -af-parser=\<func name\> \[-af-struct=\<struct name\>\ -af-struct-off=\<offset in struct\>]" to run the pass  
 5. use "clang \<output bitcode\> -o \<output exe file\>" to finish the compilation  
+ 
+# update logs, 20220908  
+update the method to deal with "strcmp", "strcasecmp", "strstr", "index", "strcpy", "strcat"
+add function "autoformat_strcmp", "autoformat_strcpy"
+-logically, the algorithm could now recognize and separate the request line of http protocol, e.g., packet(request_line(method(chars), filename(chars), CHARS), request_header0(chars), request_header1(chars), ...), notice that CHARS is http version but "tiny" server never use it, so there won't be a node for it
   
 # update logs, 20220904  
 update the method to deal with "memcpy"  
