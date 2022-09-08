@@ -71,6 +71,8 @@ struct MyHello : public ModulePass {
     FunctionType *PoppingFuncTy = FunctionType::get(voidType, {}, false);
     FunctionType *MemcpyFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type, int64Type}, false);
     FunctionType *SscanfFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type, }, true);
+    FunctionType *StrcmpFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type}, false);
+    FunctionType *StrcpyFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type}, false);
 
     static const char *BeginningFunction = "autoformat_beginning";
     static Function *BeginningFunc = (Function*)M.getOrInsertFunction(BeginningFunction, BeginningFuncTy).getCallee();
@@ -99,6 +101,12 @@ struct MyHello : public ModulePass {
     static const char *SscanfFunction = "autoformat_sscanf";
     static Function *SscanfFunc = (Function*)M.getOrInsertFunction(SscanfFunction, SscanfFuncTy).getCallee();
 
+    static const char *StrcmpFunction = "autoformat_strcmp";
+    static Function *StrcmpFunc = (Function*)M.getOrInsertFunction(StrcmpFunction, StrcmpFuncTy).getCallee();
+
+    static const char *StrcpyFunction = "autoformat_strcpy";
+    static Function *StrcpyFunc = (Function*)M.getOrInsertFunction(StrcpyFunction, StrcpyFuncTy).getCallee();
+
     for(Module::iterator I = M.begin(); I != M.end(); I++){
       Function &F = *I;
 
@@ -122,6 +130,8 @@ struct MyHello : public ModulePass {
           if(callInst){
             builder.SetInsertPoint(callInst);
             builder.CreateCall(PushingFuncTy, PushingFunc, {ConstantInt::getSigned(int64Type, (int64_t) callInst)});
+
+            // memcpy
             if(callInst->getCalledFunction() && (
                callInst->getCalledFunction()->getIntrinsicID() == Intrinsic::memcpy_element_unordered_atomic
             || callInst->getCalledFunction()->getIntrinsicID() == Intrinsic::memcpy
@@ -137,6 +147,8 @@ struct MyHello : public ModulePass {
               builder.CreateCall(MemcpyFuncTy, MemcpyFunc, {dest, src, size});
               MCpydests.push_back(dest);
             }
+
+            // sscanf
             if(callInst->getCalledFunction() && callInst->getCalledFunction()->getName().equals("__isoc99_sscanf")){
               builder.SetInsertPoint(callInst->getNextNode());
               int arg_num = callInst->arg_size();
@@ -146,6 +158,32 @@ struct MyHello : public ModulePass {
               builder.CreateCall(SscanfFuncTy, SscanfFunc, args);
               I++;
             }
+
+            // strcmp
+            if(callInst->getCalledFunction() && (
+               callInst->getCalledFunction()->getName().equals("strcmp")
+            || callInst->getCalledFunction()->getName().equals("strcasecmp")
+            || callInst->getCalledFunction()->getName().equals("strstr")
+            || callInst->getCalledFunction()->getName().equals("index"))){
+              Value *str1 = callInst->getOperand(0);
+              Value *str2 = callInst->getOperand(1);
+              str2 = builder.CreateBitOrPointerCast(str2, ptr8Type, "castto8");
+              builder.CreateCall(StrcmpFuncTy, StrcmpFunc, {str1, str2});
+            }
+
+            // strcpy
+            if(callInst->getCalledFunction() && callInst->getCalledFunction()->getName().equals("strcpy")){
+              Value *dest = callInst->getOperand(0);
+              Value *src = callInst->getOperand(1);
+              builder.CreateCall(StrcpyFuncTy, StrcpyFunc, {dest, src});
+            }
+
+            // strcat
+            if(callInst->getCalledFunction() && callInst->getCalledFunction()->getName().equals("strcat")){
+              Value *src = callInst->getOperand(1);
+              builder.CreateCall(StrcpyFuncTy, StrcpyFunc, {src, src});
+            }
+
             builder.SetInsertPoint(callInst->getNextNode());
             builder.CreateCall(PoppingFuncTy, PoppingFunc, {});
             I++;
