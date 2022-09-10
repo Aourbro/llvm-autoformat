@@ -16,7 +16,7 @@ llvm version: 15.0.0
 # update logs, 20220910  
 implemented the algorithm 1 mentioned in the paper, it could generate the field tree with a single log file  
 -there is no order between the siblings in the tree, but it doesn't matter and could be modified later  
--the pre-process program will be integrated into this identifier later
+-the pre-process program will be integrated into this identifier later  
 -by the way, I prefer c++
  
 # update logs, 20220908  
