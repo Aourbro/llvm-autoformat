@@ -14,8 +14,8 @@ llvm version: 15.0.0
 6. after running the pass and start the server and received a package, and there should be a file called "af_log.txt", then, compile and run the "./ifentifier af_log.txt", it will dump the field tree on the terminal  
   
 # update logs, 20220916  
-the field tree could be refined properly
--tokenization and deletion of redundant nodes
+the field tree could be refined properly  
+-tokenization and deletion of redundant nodes  
   
 # update logs, 20220910  
 implemented the algorithm 1 mentioned in the paper, it could generate the field tree with a single log file  
