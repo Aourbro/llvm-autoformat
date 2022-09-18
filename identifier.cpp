@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <vector>
+#include <queue>
 #include <set>
 #include <algorithm>
 #include <iostream>
@@ -17,15 +18,23 @@ class alog{
     int o;
     char c;
     vector<__uint64_t> s;
-    bool operator==(alog &l){
-        return (this->o == l.o);
-    }
 };
 
 class tree_node{
     public:
     set<int> range;
+    bool parallel_mark;
     vector<tree_node *> child;
+    vector<vector<__uint64_t> > history;
+    tree_node(){parallel_mark = false;}
+};
+
+class trie_tree_node{
+    public:
+    int visited;
+    vector<__uint64_t> data;
+    vector<trie_tree_node *> child;
+    trie_tree_node(){visited = 0;}
 };
 
 bool comp_node(tree_node *node1, tree_node *node2){
@@ -141,6 +150,78 @@ void Redundant_Node_Deletion(tree_node *root){
     for(tree_node *node:root->child) Redundant_Node_Deletion(node);
 }
 
+void New_Node_Insertion(tree_node *root){
+
+}
+
+void Parrallel_Field_Identification(tree_node *root, vector<alog *> log){
+    int N = log.size();
+    queue<tree_node *> q;
+    q.push(root);
+    while(!q.empty()){
+        tree_node *v = q.front();
+        q.pop();
+        for(tree_node *node:v->child) q.push(node);
+        int child_num = v->child.size();
+        trie_tree_node *trie_root = new trie_tree_node();
+        for(int i = 0; i < child_num; ++i){
+            int lo = *(v->child[i]->range.begin());
+            trie_tree_node *trie_node = trie_root;
+            for(int k = 0; k < N; ++k){
+                if(log[k]->o == lo){
+                    v->child[i]->history.push_back(log[k]->s);
+                    bool flag = false;
+                    for(trie_tree_node *node:trie_node->child){
+                        if(node->data == log[k]->s){
+                            flag = true;
+                            trie_node = node;
+                            node->visited++;
+                        }
+                    }
+                    if(!flag){
+                        trie_tree_node *node = new trie_tree_node();
+                        node->data = log[k]->s;
+                        node->visited++;
+                        trie_node->child.push_back(node);
+                    }
+                }
+            }
+        }
+        int parallel_num = 0;
+        for(int i = 0; i < child_num; ++i){
+            int parallel_size = v->child[i]->history.size() * 80 / 100; // h%, h = 80;
+            trie_tree_node *trie_node = trie_root;
+            for(int k = 0; k < parallel_size; ++k){
+                for(trie_tree_node *node:trie_node->child){
+                    if(node->data == v->child[i]->history[k]) trie_node = node;
+                }
+            }
+            if(trie_node->visited > 1){
+                v->child[i]->parallel_mark = true;
+                parallel_num++;
+            }
+        }
+        assert(parallel_num != 1 && "impossible for one single parallel field!");
+        if(parallel_num){
+            tree_node *new_node = new tree_node();
+            // notice: there is some difference from the paper, here I did not handle the non-marked node(s) between two marked nodes
+            for(vector<tree_node *>::iterator it = v->child.begin(); it != v->child.end(); ){
+                if((*it)->parallel_mark){
+                    new_node->child.push_back(*it);
+                    set<int> new_set;
+                    set_union(new_node->range.begin(), new_node->range.end(), (*it)->range.begin(), (*it)->range.end(), inserter(new_set, new_set.begin()));
+                    new_node->range.clear();
+                    new_node->range = new_set;
+                    v->child.erase(it);
+                }
+                else it++;
+            }
+            v->child.push_back(new_node);
+            sort(v->child.begin(), v->child.end(), comp_node);
+        }
+    }
+}
+
 void dump(tree_node *node){
     for(int i = 0; i < tabular; ++i) cout << " ";
     for(set<int>::iterator it = node->range.begin(); it != node->range.end(); ++it){
@@ -185,6 +266,8 @@ int main(int argc, char *argv[]){
     }
     tree_node *tree = Field_Tree_Creation(log);
     Tokenization(tree);
+    Redundant_Node_Deletion(tree);
+    Parrallel_Field_Identification(tree, log);
     Redundant_Node_Deletion(tree);
     dump(tree);
     return 0;
