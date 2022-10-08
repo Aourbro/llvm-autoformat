@@ -13,6 +13,11 @@ llvm version: 15.0.0
 5. use "clang \<output bitcode\> -o \<output exe file\>" to finish the compilation  
 6. after running the pass and start the server and received a package, and there should be a file called "af_log.txt", then, compile and run the "./ifentifier af_log.txt", it will dump the field tree on the terminal  
   
+# update logs, 20221008  
+extended the pass, the header and the identifier for binary protocols  
+added function "autoformat_memcmp", "autoformat_memchr" to deal with "memcmp", "memchr" and "strchr"  
+-they were found in babeld  
+  
 # update logs, 20220918  
 finished algorithm 2(parallel field identifier)  
 -there is a problem while handling the situation that the parallel fields are not neighbors  
