@@ -64,6 +64,8 @@ void autoformat_end() {
     start_logging = 0;
     free(call_stack);
 
+    fprintf(fp, "--------");
+
     fclose(fp);
 }
 
@@ -105,11 +107,11 @@ void autoformat_logging(uint8_t *ptr, uint64_t nbytes) {
             uint64_t delta = ((uint64_t) ptr) + x - (uint64_t) crt->buf_base;
             if (delta < crt->buf_len) {
                 // logging the offset and the call stack
-                fprintf(fp, "[autoformat] %llu, ", delta + crt->buf_offset);
+                fprintf(fp, "[autoformat] %lu, ", delta + crt->buf_offset);
                 char c = ptr[x];
-                fprintf(fp, "%c, ", c);
+                fprintf(fp, "%d, ", c);
                 for (unsigned y = 0; y < call_stack_ptr; ++y) {
-                    fprintf(fp, "%llu, ", call_stack[y]);
+                    fprintf(fp, "%lu, ", call_stack[y]);
                 }
                 fprintf(fp, "\n");
             }
@@ -157,6 +159,18 @@ void autoformat_memcpy(uint8_t *dest, uint8_t *src, uint64_t size){
     }
 }
 
+void autoformat_memcmp(uint8_t *mem1, uint8_t *mem2, uint64_t size){
+    if(!start_logging) return;
+    autoformat_logging(mem1, size);
+    autoformat_logging(mem2, size);
+}
+
+void autoformat_memchr(uint8_t *src){
+    if(!start_logging) return;
+    if(src) autoformat_logging(src, 1);
+}
+
+/* functions below are all used for string operations, so strlen() is free for use */
 void autoformat_sscanf(char *str, char *format, ...){
     if (!start_logging) return;
     autoformat_logging((uint8_t *) str, strlen(str));
