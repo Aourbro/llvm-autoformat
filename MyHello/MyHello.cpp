@@ -69,6 +69,8 @@ struct MyHello : public ModulePass {
     FunctionType *LoggingFuncTy = FunctionType::get(voidType, {ptr8Type, int64Type}, false);
     FunctionType *PushingFuncTy = FunctionType::get(voidType, {int64Type}, false);
     FunctionType *PoppingFuncTy = FunctionType::get(voidType, {}, false);
+    FunctionType *MemcmpFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type, int64Type}, false);
+    FunctionType *MemchrFuncTy = FunctionType::get(voidType, {ptr8Type}, false);
     FunctionType *MemcpyFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type, int64Type}, false);
     FunctionType *SscanfFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type, }, true);
     FunctionType *StrcmpFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type}, false);
@@ -94,6 +96,12 @@ struct MyHello : public ModulePass {
 
     static const char *PoppingFunction = "autoformat_popping";
     static Function *PoppingFunc = (Function*)M.getOrInsertFunction(PoppingFunction, PoppingFuncTy).getCallee();
+
+    static const char *MemcmpFunction = "autoformat_memcmp";
+    static Function *MemcmpFunc = (Function*)M.getOrInsertFunction(MemcmpFunction, MemcmpFuncTy).getCallee();
+
+    static const char *MemchrFunction = "autoformat_memchr";
+    static Function *MemchrFunc = (Function*)M.getOrInsertFunction(MemchrFunction, MemchrFuncTy).getCallee();
 
     static const char *MemcpyFunction = "autoformat_memcpy";
     static Function *MemcpyFunc = (Function*)M.getOrInsertFunction(MemcpyFunction, MemcpyFuncTy).getCallee();
@@ -130,6 +138,31 @@ struct MyHello : public ModulePass {
           if(callInst){
             builder.SetInsertPoint(callInst);
             builder.CreateCall(PushingFuncTy, PushingFunc, {ConstantInt::getSigned(int64Type, (int64_t) callInst)});
+
+            // memcmp
+            if(callInst->getCalledFunction() &&
+               callInst->getCalledFunction()->getName().equals("memcmp")
+            ){
+              Value *mem1 = callInst->getOperand(0);
+              mem1 = builder.CreateBitOrPointerCast(mem1, ptr8Type, "castto8");
+              Value *mem2 = callInst->getArgOperand(1);
+              mem2 = builder.CreateBitOrPointerCast(mem2, ptr8Type, "castto8");
+              Value *size = callInst->getArgOperand(2);
+              assert(size->getType()->isIntegerTy());
+              if(!size->getType()->isIntegerTy(64)) size = builder.CreateZExtOrBitCast(size, int64Type, "castto64");
+              builder.CreateCall(MemcmpFuncTy, MemcmpFunc, {mem1, mem2, size});
+            }
+
+            // memchr
+            if(callInst->getCalledFunction() &&
+               callInst->getCalledFunction()->getName().equals("memchr")
+            ){
+              builder.SetInsertPoint(callInst->getNextNode());
+              Value *src = callInst;
+              src = builder.CreateBitOrPointerCast(src, ptr8Type, "castto8");
+              builder.CreateCall(MemchrFuncTy, MemchrFunc, {src});
+              I++;
+            }
 
             // memcpy
             if(callInst->getCalledFunction() && (
@@ -187,6 +220,17 @@ struct MyHello : public ModulePass {
             builder.SetInsertPoint(callInst->getNextNode());
             builder.CreateCall(PoppingFuncTy, PoppingFunc, {});
             I++;
+
+            // strchr
+            if(callInst->getCalledFunction() &&
+               callInst->getCalledFunction()->getName().equals("strchr")
+            ){
+              builder.SetInsertPoint(callInst->getNextNode());
+              Value *src = callInst;
+              src = builder.CreateBitOrPointerCast(src, ptr8Type, "castto8");
+              builder.CreateCall(MemchrFuncTy, MemchrFunc, {src});
+              I++;
+            }
           }
 
           // load inst, log
