@@ -10,10 +10,10 @@
 using namespace std;
 
 int tabular;
-char package[65536];
+unsigned char package[65536];
 
 /* if the protocol package is binary */
-bool bin_proto = false;
+bool bin_proto = true;
 
 /* for http */
 string content;
@@ -22,7 +22,7 @@ string delims[16] = {" ", "\r\n"};
 class alog{
     public:
     int o;
-    char c;
+    unsigned char c;
     vector<__uint64_t> s;
 };
 
@@ -69,7 +69,7 @@ tree_node *Find(tree_node *u, tree_node *v){
 tree_node *Field_Tree_Creation(vector<alog *> log){
     tree_node *root = new tree_node();
     int N = log.size();
-    for(int i = 0; i < N; ++i){
+    for(int i = 0; i < N - 1; ++i){
         root->range.insert(log[i]->o);
         package[log[i]->o] = log[i]->c;
     }
@@ -178,15 +178,29 @@ void New_Node_Insertion(tree_node *root){
     }
     set<int>::iterator it1 = root->range.begin();
     set<int>::iterator it2 = new_set.begin();
-    for( ; it1 != root->range.end() && it2 != new_set.end(); ++it1, ++it2){
+    tree_node *new_node = new tree_node();
+    for( ; it1 != root->range.end() && it2 != new_set.end(); ){
         assert(*it2 >= *it1);
         if(*it2 > *it1){
-            tree_node *new_node = new tree_node();
             new_node->range.insert(*it1);
-            root->child.push_back(new_node);
-            ++it1;
+            ++ it1;
+        }
+        else{
+            if(!new_node->range.empty()){
+                root->child.push_back(new_node);
+                new_node = new tree_node();
+            }
+            ++ it1;
+            ++ it2;
         }
     }
+    new_node = new tree_node();
+    for( ; it1 != root->range.end(); ){
+        new_node->range.insert(*it1);
+        ++ it1;
+    }
+    if(!new_node->range.empty())
+        root->child.push_back(new_node);
     sort(root->child.begin(), root->child.end(), comp_node);
     for(tree_node *node:root->child) New_Node_Insertion(node);
 }
@@ -226,7 +240,7 @@ void Parrallel_Field_Identification(tree_node *root, vector<alog *> log){
         }
         int parallel_num = 0;
         for(int i = 0; i < child_num; ++i){
-            int parallel_size = v->child[i]->history.size() * 80 / 100; // h%, h = 80;
+            int parallel_size = v->child[i]->history.size() * 100 / 100; // h%, h = 80;
             trie_tree_node *trie_node = trie_root;
             for(int k = 0; k < parallel_size; ++k){
                 for(trie_tree_node *node:trie_node->child){
@@ -273,7 +287,7 @@ void Sequential_Field_Identifier(tree_node *root, vector<tree_node *> &seq_list,
 
 void dump_node(tree_node *node){
     for(set<int>::iterator it = node->range.begin(); it != node->range.end(); ++it){
-        switch (package[*it]){
+        if(!bin_proto) switch (package[*it]){
             case '\r':
                 cout << "\\r";
             break;
@@ -281,9 +295,11 @@ void dump_node(tree_node *node){
                 cout << "\\n";
             break;
             default:
-                if(bin_proto) cout << (int)package[*it];
-                else cout << package[*it];
+                cout << package[*it];
             break;
+        }
+        else{
+            printf("%02x ", package[*it]);
         }
     }
 }
@@ -308,7 +324,7 @@ int main(int argc, char *argv[]){
         if(af[0] == '-') break;
         alog *l = new alog();
         l->o = offset;
-        l->c = (char) ch;
+        l->c = (unsigned char) ch;
         uint64_t func;
         while(fscanf(fp, "%lu, ", &func)){
             l->s.push_back(func);
@@ -318,15 +334,37 @@ int main(int argc, char *argv[]){
         || (l->s != log.back()->s))
             log.push_back(l);
     }
-    tree_node *tree = Field_Tree_Creation(log);
 
-    if(!bin_proto) content = package;
+    alog *l = new alog();
+    l->o = -1;
+    l->c = 0;
+    l->s.push_back(0);
+    log.push_back(l);
+    
+    tree_node *tree = Field_Tree_Creation(log);
+    printf("original tree:\n");
+    dump(tree);
+
+    if(!bin_proto) content = (char *)package;
 
     New_Node_Insertion(tree);
+    printf("new node tree:\n");
+    dump(tree);
     if(!bin_proto) Tokenization(tree);
     Redundant_Node_Deletion(tree);
+    printf("reduce tree:\n");
+    dump(tree);
+
+    return 0;
+    // Stop
+
+    // para fields identifier:
     Parrallel_Field_Identification(tree, log);
+    printf("para tree:\n");
+    dump(tree);
     Redundant_Node_Deletion(tree);
+    printf("final reduce tree:\n");
+    dump(tree);
 
     // seq fields identifier:
     vector<vector<tree_node *> > seq_lists;
@@ -347,7 +385,5 @@ int main(int argc, char *argv[]){
         }
         cout << endl;
     }
-
-    dump(tree);
     return 0;
 }
