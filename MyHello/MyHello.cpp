@@ -16,31 +16,38 @@
 
 using namespace llvm;
 
+// if buffer address is one of the arguments of the parser, which one is it:
 static cl::opt<int> BufferArg(
         "af-buffer-arg",
         cl::desc("allows we set break point at some place"),
         cl::init(-1));
 
+// if buffer length is one of the arguments of the parser, which one is it:
+// or if the buffer length is opaque, set it manually
 static cl::opt<int> LenArg(
         "af-len",
         cl::desc("allows we set break point at some place"),
         cl::init(-1));
 
+// if buffer is stored in a struct, where is it:
 static cl::opt<int> StructOffset(
         "af-struct-off",
         cl::desc("allows we set break point at some place"),
         cl::init(-1));
 
+// if the buffer is stored in a local variable, what is the name of the buffer:
 static cl::opt<std::string> BufferName(
         "af-buffer-name",
         cl::desc("allows we set break point at some place"),
         cl::init(""));
 
+// if buffer is stored in a struct, what is the name of the struct:
 static cl::opt<std::string> Struct(
         "af-struct",
         cl::desc("allows we set break point at some place"),
         cl::init(""));
 
+// the name of the parsing funciton:
 static cl::opt<std::string> ParsingFunc(
         "af-parser",
         cl::desc("allows we set break point at some place"),
@@ -75,6 +82,7 @@ struct MyHello : public ModulePass {
     FunctionType *SscanfFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type, }, true);
     FunctionType *StrcmpFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type}, false);
     FunctionType *StrcpyFuncTy = FunctionType::get(voidType, {ptr8Type, ptr8Type}, false);
+    FunctionType *FreeFuncTy = FunctionType::get(voidType, {ptr8Type}, false);
 
     static const char *BeginningFunction = "autoformat_beginning";
     static Function *BeginningFunc = (Function*)M.getOrInsertFunction(BeginningFunction, BeginningFuncTy).getCallee();
@@ -115,6 +123,9 @@ struct MyHello : public ModulePass {
     static const char *StrcpyFunction = "autoformat_strcpy";
     static Function *StrcpyFunc = (Function*)M.getOrInsertFunction(StrcpyFunction, StrcpyFuncTy).getCallee();
 
+    static const char *FreeFunction = "autoformat_free";
+    static Function *FreeFunc = (Function*)M.getOrInsertFunction(FreeFunction, FreeFuncTy).getCallee();
+
     for(Module::iterator I = M.begin(); I != M.end(); I++){
       Function &F = *I;
 
@@ -135,7 +146,8 @@ struct MyHello : public ModulePass {
 
           // call inst, push & pop & log
           CallInst *callInst = dyn_cast<CallInst>(&Inst);
-          if(callInst){
+          if(callInst &&
+           !(callInst->getCalledFunction() && callInst->getCalledFunction()->getName().startswith("autoformat"))){
             builder.SetInsertPoint(callInst);
             builder.CreateCall(PushingFuncTy, PushingFunc, {ConstantInt::getSigned(int64Type, (int64_t) callInst)});
 
@@ -217,20 +229,27 @@ struct MyHello : public ModulePass {
               builder.CreateCall(StrcpyFuncTy, StrcpyFunc, {src, src});
             }
 
-            builder.SetInsertPoint(callInst->getNextNode());
-            builder.CreateCall(PoppingFuncTy, PoppingFunc, {});
-            I++;
-
             // strchr
             if(callInst->getCalledFunction() &&
-               callInst->getCalledFunction()->getName().equals("strchr")
-            ){
+               callInst->getCalledFunction()->getName().equals("strchr")){
               builder.SetInsertPoint(callInst->getNextNode());
               Value *src = callInst;
               src = builder.CreateBitOrPointerCast(src, ptr8Type, "castto8");
               builder.CreateCall(MemchrFuncTy, MemchrFunc, {src});
               I++;
             }
+
+            // free
+            if(callInst->getCalledFunction() &&
+               callInst->getCalledFunction()->getName().equals("free")){
+              Value *ptr = callInst->getOperand(0);
+              ptr = builder.CreateBitOrPointerCast(ptr, ptr8Type, "castto8");
+              builder.CreateCall(FreeFuncTy, FreeFunc, {ptr});
+            }
+
+            builder.SetInsertPoint(callInst->getNextNode());
+            builder.CreateCall(PoppingFuncTy, PoppingFunc, {});
+            I++;
           }
 
           // load inst, log
@@ -251,7 +270,7 @@ struct MyHello : public ModulePass {
                 Value *dest = storeInst->getPointerOperand();
                 dest = builder.CreateBitOrPointerCast(dest, ptr8Type, "castto8");
                 Value *src = builder.CreateBitOrPointerCast(loadInsts[i]->getPointerOperand(), ptr8Type, "castto8");
-                builder.CreateCall(MemcpyFuncTy, MemcpyFunc, {dest, src, ConstantInt::get(int64Type, 1)});
+                builder.CreateCall(MemcpyFuncTy, MemcpyFunc, {dest, src, ConstantInt::get(int64Type, storeInst->getValueOperand()->getType()->getPrimitiveSizeInBits().getValue(0) / 8)});
                 MCpydests.push_back(dest);
               }
             }
@@ -303,18 +322,21 @@ struct MyHello : public ModulePass {
 
             AllocaInst *allocaInst = dyn_cast<AllocaInst>(&Inst);
             if(allocaInst && BufferArg == -1){
-              builder.SetInsertPoint(allocaInst->getNextNode());
               if(allocaInst->getName().equals(BufferName)){
+                builder.SetInsertPoint(allocaInst->getNextNode());
                 Value *BufferLen = ConstantInt::get(int64Type, dyn_cast<ArrayType>(allocaInst->getAllocatedType())->getNumElements());
                 Value *BufferPtr = builder.CreateBitOrPointerCast(allocaInst, ptr8Type, "castto8");
                 builder.CreateCall(AddBaseFuncTy, AddBaseFunc, {BufferPtr, ConstantInt::get(int64Type, 0), BufferLen});
+                I ++;
               }
 
               if(allocaInst->getAllocatedType()->isStructTy() && allocaInst->getAllocatedType()->getStructName().equals("struct." + Struct.getValue())){
                 assert(LenArgId > 0);
+                builder.SetInsertPoint(allocaInst->getNextNode());
                 Value *BufferLen = ConstantInt::get(int64Type, LenArgId);
                 Value *BufferPtr = builder.CreateStructGEP(StructType::getTypeByName(M.getContext(), "struct." + Struct.getValue()), allocaInst, StructOff, "gep");
                 builder.CreateCall(AddBaseFuncTy, AddBaseFunc, {BufferPtr, ConstantInt::get(int64Type, 0), BufferLen});
+                I ++;
               }
             }
 
